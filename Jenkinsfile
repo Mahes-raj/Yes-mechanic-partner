@@ -1,49 +1,59 @@
 pipeline {
   agent any
-      tools {
-       jdk 'jdk17'
-       nodejs 'node24'
-    }
+
+  tools {
+    jdk 'jdk17'
+    nodejs 'node24'
+  }
 
   environment {
-    DOCKER_HUB_USER = "mahesraj"                 // Updated Docker Hub username
-    IMAGE_NAME = "yesmechanicpartner"            // Updated project name
-    IMAGE_TAG = "v${BUILD_NUMBER}"               // Tag based on Jenkins build number
-    FULL_IMAGE_NAME = "${DOCKER_HUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}"  // Full image name
+    DOCKER_HUB_USER = "mahesraj"
+    IMAGE_NAME = "yesmechanicpartner"
+    IMAGE_TAG = "v${BUILD_NUMBER}"
+    FULL_IMAGE_NAME = "${DOCKER_HUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}"
   }
 
   stages {
     stage('Checkout Code') {
       steps {
-        // Pull the latest code from the specified GitHub repo and branch
         git branch: 'main', url: 'https://github.com/Mahes-raj/Yes-mechanic-partner.git'
       }
     }
-       stage('SonarQube Code Analysis') {
-            steps {
-                withSonarQubeEnv('sonar-server') {
-                    sh  “$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Yes-mechanic-partner/ -Dsonar.projectkey=Yes-mechanic-partner”
-                }
-            }
-        }
-        stage ('quality gate'){
-          steps {
-              script {
-                  waitForQualityGate abortPipeline:false, credentialsId:'Sonar1-token'
-              }
-          }
-       }
-       stage('Install NPM dependencies') {
-         steps {
-            sh "npm install"
-         }
-        }
 
+    stage('SonarQube Code Analysis') {
+      steps {
+        withSonarQubeEnv('sonar-server') {
+          withCredentials([string(credentialsId: 'SONAR_TOKEN', variable: 'SONAR_TOKEN')]) {
+            sh """
+              $SCANNER_HOME/bin/sonar-scanner \\
+                -Dsonar.projectKey=yesmechanicpartner \\
+                -Dsonar.projectName=Yes-mechanic-partner \\
+                -Dsonar.sources=. \\
+                -Dsonar.host.url=http://<SONAR_HOST>:9000 \\
+                -Dsonar.login=${SONAR_TOKEN}
+            """
+          }
+        }
+      }
+    }
+
+    stage('Quality Gate') {
+      steps {
+        script {
+          waitForQualityGate abortPipeline: false
+        }
+      }
+    }
+
+    stage('Install NPM dependencies') {
+      steps {
+        sh "npm install"
+      }
+    }
 
     stage('Build Docker Image') {
       steps {
         script {
-          // Build the Docker image using the Dockerfile in the project
           dockerImage = docker.build("${FULL_IMAGE_NAME}", "--no-cache .")
         }
       }
@@ -52,7 +62,6 @@ pipeline {
     stage('Push Docker Image to DockerHub') {
       steps {
         script {
-          // Push the built Docker image to Docker Hub
           docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-creds') {
             dockerImage.push()
           }
@@ -63,12 +72,11 @@ pipeline {
     stage('Deploy to Kubernetes') {
       steps {
         script {
-          // Replace the image in k8s-deployment.yaml with the newly built image
-          sh '''
-            sed -i 's|image: .*|image: '"$FULL_IMAGE_NAME"'|' k8s-deployment.yaml
+          sh """
+            sed -i 's|image: .*|image: ${FULL_IMAGE_NAME}|' k8s-deployment.yaml
             kubectl apply -f k8s-deployment.yaml --validate=false
             kubectl rollout status deployment/yesmechanicpartner
-          '''
+          """
         }
       }
     }
@@ -83,5 +91,4 @@ pipeline {
     }
   }
 }
-
 
